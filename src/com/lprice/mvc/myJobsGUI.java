@@ -1,5 +1,6 @@
 package com.lprice.mvc;
 import static com.lprice.mvc.as400Handler.*;
+import static com.lprice.mvc.lputils.print;
 
 import com.ibm.as400.access.*;
 
@@ -7,44 +8,39 @@ import java.awt.*;
 import java.awt.event.*;
 import java.beans.PropertyVetoException;
 import java.io.IOException;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.text.ParseException;
 import java.util.*;
-import java.util.List;
+import javax.sound.sampled.LineUnavailableException;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableModel;
 
 public class myJobsGUI implements ActionListener, ComponentListener {
-    JPanel cards; //a panel that uses CardLayout
-    CardLayout cl; //a cardlayout
     final static String LOGIN = "Card with card with login";
     final static String MAIN = "Card with main menu";
     final static String STATUS = "Card with job status";
     final static String POPUP = "Card with popup message";
+    static int monitor = 2; // the monitor to display the gui on
+
+    AS400 as400; // database object to use for all db actions in app
+
+    CardLayout cl; // the card layout used
+
+    JPanel cards; //a panel that uses CardLayout
     JButton toggleButton;
     JButton refreshButton;
     JButton btnSignon;
-
     JTextField userField;
     JPasswordField passField;
     JLabel validation;
-    AS400 as400;
-
-    JTable tblSpool;
+    JTable tblActiveSpool;
+    JTable tblInactiveSpool;
     JLabel usrLabel;
-
-    // set up easy date time methods
-    public static String now(){
-        LocalDateTime localDT = LocalDateTime.now();
-        DateTimeFormatter format = DateTimeFormatter.ofPattern("MM-dd-yyyy HH:mm:ss");
-        return localDT.format(format);
-    }
-
-    // set up easy print methods
-    public static void print(String msg){System.out.println(now()+" "+msg);}
-    public static void print(String[] msg){for (String s : msg) {System.out.println(now()+" "+s);}}
-    public static void print(int[] msg){for (int i : msg) {System.out.println(now()+" "+i);}}
+    
+    String userName;
+    
+    String[] columnNames = {"", "", ""};
+    Object[][] data = {{"", "", ""}};
 
 
     public void addComponentToPane(Container pane) {
@@ -55,6 +51,7 @@ public class myJobsGUI implements ActionListener, ComponentListener {
         toggleButton.addActionListener(this);
         topMenuPanel.add(usrLabel = new JLabel("TOGGLE BUTTON FOR DEBUGGING"));
         topMenuPanel.add(toggleButton);
+
         //==========================================================
         //Create the "cards".
         //==========================================================
@@ -110,27 +107,70 @@ public class myJobsGUI implements ActionListener, ComponentListener {
         card2.setName(MAIN);
         card2.setLayout(new BoxLayout(card2, BoxLayout.PAGE_AXIS));
         card2.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        card2.setPreferredSize(new Dimension((int) Math.round(pane.getWidth()*0.8),200));
 
-
+        // refresh button
         refreshButton = new JButton("Refresh Data");
         refreshButton.addActionListener(new refreshListener());
 
-        String[] columnNames = {"job", "status", "started"};
-        Object[][] data = {{"job1", "status1", "started1"}};
-        DefaultTableModel model = new DefaultTableModel(data, columnNames);
-        tblSpool = new JTable(model);
-        JScrollPane scrollPane = new JScrollPane(tblSpool);
-        scrollPane.setPreferredSize(new Dimension(card2.getWidth(), 200)); // Set preferred size here
+        // create tabbed pane for different tables
+        JTabbedPane tabbedPane = new JTabbedPane();
 
+        JPanel activeJobPanel = new JPanel();
+        JPanel inactiveJobPanel = new JPanel();
+
+        activeJobPanel.setBorder(BorderFactory.createEmptyBorder(10,0,10,0));
+        inactiveJobPanel.setBorder(BorderFactory.createEmptyBorder(10, 0, 10, 0));
+
+        activeJobPanel.setLayout(new BorderLayout());
+        inactiveJobPanel.setLayout(new BorderLayout());
+//        activeJobPanel.setBorder(BorderFactory.createLineBorder(Color.BLUE));
+
+        inactiveJobPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+
+        JScrollPane scrollActive = new JScrollPane();
+        JScrollPane scrollInactive = new JScrollPane();
+
+        scrollActive.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+//        scrollActive.setViewportBorder(BorderFactory.createLineBorder(Color.GREEN));
+
+
+        // create table
+        DefaultTableModel model = new DefaultTableModel(data, columnNames);
+        tblActiveSpool = new JTable(model);
+        tblActiveSpool.setBorder(BorderFactory.createLineBorder(Color.RED));
+
+        tblInactiveSpool = new JTable(model);
+
+        int width = (int) Math.round(activeJobPanel.getWidth()*0.8);
+        scrollActive.setPreferredSize(new Dimension(200, 100)); // Set preferred size here
+        scrollInactive.setPreferredSize(new Dimension(width, 200)); // Set preferred size here
+
+
+        scrollActive.setViewportView(tblActiveSpool);
+        scrollInactive.setViewportView(tblInactiveSpool);
+
+        activeJobPanel.add(scrollActive);
+        inactiveJobPanel.add(scrollInactive);
+
+        // submit button
         JButton btnSubmit = new JButton("submit");
         btnSubmit.addActionListener(new submitListener());
 
+        inactiveJobPanel.add(btnSubmit);
+
+        // add the two panels to tabbed pane
+        tabbedPane.addTab("Active Jobs", activeJobPanel);
+        tabbedPane.addTab("Inactive Jobs", inactiveJobPanel);
+
+
+        // construct the card
         card2.add(refreshButton);
         card2.add(Box.createVerticalStrut(10));
-        card2.add(scrollPane);
+        card2.add(tabbedPane);
         card2.add(Box.createVerticalStrut(10));
         card2.add(btnSubmit);
-
+        card2.revalidate();
 
         // card 3====================
         JPanel card3 = new JPanel();
@@ -147,12 +187,30 @@ public class myJobsGUI implements ActionListener, ComponentListener {
         JPanel card4 = new JPanel();
         card4.setName(POPUP);
         card4.setLayout(new BoxLayout(card4, BoxLayout.PAGE_AXIS));
-        JLabel loginWarning = new JLabel("your login failed");
-        JButton btnReturn = new JButton("back");
-        btnReturn.addActionListener(new returnListener());
+        card4.setBorder(BorderFactory.createEmptyBorder(10,10,10,10));
 
-        card4.add(loginWarning);
-        card4.add(btnReturn);
+        JTabbedPane tabPane = new JTabbedPane();
+
+        JPanel panelScroll = new JPanel();
+        panelScroll.setLayout(new BorderLayout());
+
+        JScrollPane myScroll = new JScrollPane();
+
+        TableModel myModel = new DefaultTableModel(new String[][] {{"data1","data2","data3"}},new String[] {"col1","col2","col3"});
+        JTable myTable = new JTable(myModel);
+
+        int width2 = (int) Math.round(tabPane.getWidth()*0.8);
+
+
+        myScroll.setViewportView(myTable);
+        panelScroll.setPreferredSize(new Dimension(width2, 200));
+
+        panelScroll.add(myScroll);
+        tabPane.add("tab1",panelScroll);
+
+
+        card4.add(tabPane);
+
 
         //==========================================================
         // create the panel that contains the "cards".
@@ -177,6 +235,7 @@ public class myJobsGUI implements ActionListener, ComponentListener {
                 }
             }
         });
+
 
         pane.add(topMenuPanel, BorderLayout.PAGE_START);
         pane.add(cards, BorderLayout.CENTER);
@@ -214,19 +273,13 @@ public class myJobsGUI implements ActionListener, ComponentListener {
             } else {
                 //auth
                 as400 = new AS400("CHRZNPRD", userField.getText(), new String(passField.getPassword()));
+                userName = userField.getText();
                 try {
-                    updateSpoolTable(as400, tblSpool);
-                } catch (PropertyVetoException ex) {
-                    throw new RuntimeException(ex);
-                } catch (AS400SecurityException ex) {
-                    throw new RuntimeException(ex);
-                } catch (ObjectDoesNotExistException ex) {
-                    throw new RuntimeException(ex);
-                } catch (IOException ex) {
-                    throw new RuntimeException(ex);
-                } catch (InterruptedException ex) {
-                    throw new RuntimeException(ex);
-                } catch (ErrorCompletingRequestException ex) {
+                    updateSpoolTable(as400, tblActiveSpool, false, false);
+                    updateSpoolTable(as400, tblInactiveSpool, true, false);
+
+                } catch (PropertyVetoException | ErrorCompletingRequestException | InterruptedException | IOException |
+                         AS400SecurityException | ObjectDoesNotExistException | ParseException ex) {
                     throw new RuntimeException(ex);
                 }
                 validation.setVisible(false);
@@ -238,7 +291,20 @@ public class myJobsGUI implements ActionListener, ComponentListener {
     }
     public class submitListener implements ActionListener {
         public void actionPerformed(ActionEvent e) {
-            CardLayout cl = (CardLayout)(cards.getLayout());
+            int iRow = tblActiveSpool.getSelectedRow();
+            String jobName = tblActiveSpool.getValueAt(iRow, 0).toString();
+            String jobNumber = tblActiveSpool.getValueAt(iRow, 1).toString();
+            print("User selected the following job -> Job name: " + jobName + "; Job number: " + jobNumber);
+
+            try {
+                monitorJob(as400, jobName, userName, jobNumber);
+            } catch (AS400SecurityException | LineUnavailableException | ErrorCompletingRequestException |
+                     InterruptedException | ObjectDoesNotExistException | IOException ex) {
+                throw new RuntimeException(ex);
+            }
+
+            // go to the job monitor card
+            cl = (CardLayout)(cards.getLayout());
             cl.show(cards, STATUS);
             print("viewing status menu");
         }
@@ -268,18 +334,10 @@ public class myJobsGUI implements ActionListener, ComponentListener {
     public class refreshListener implements ActionListener {
         public void actionPerformed(ActionEvent e) {
             try {
-                updateSpoolTable(as400, tblSpool);
-            } catch (PropertyVetoException ex) {
-                throw new RuntimeException(ex);
-            } catch (AS400SecurityException ex) {
-                throw new RuntimeException(ex);
-            } catch (ObjectDoesNotExistException ex) {
-                throw new RuntimeException(ex);
-            } catch (IOException ex) {
-                throw new RuntimeException(ex);
-            } catch (InterruptedException ex) {
-                throw new RuntimeException(ex);
-            } catch (ErrorCompletingRequestException ex) {
+                updateSpoolTable(as400, tblActiveSpool, false, false);
+                updateSpoolTable(as400, tblInactiveSpool, true, false);
+            } catch (PropertyVetoException | AS400SecurityException | ObjectDoesNotExistException | IOException |
+                     InterruptedException | ErrorCompletingRequestException | ParseException ex) {
                 throw new RuntimeException(ex);
             }
         }
@@ -290,6 +348,7 @@ public class myJobsGUI implements ActionListener, ComponentListener {
         //Create and set up the window.
         JFrame frame = new JFrame("myJobsGUI");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setPreferredSize(new Dimension(400,500)); // set the app dimension
 
         //Create and set up the content pane.
         myJobsGUI demo = new myJobsGUI();
@@ -298,67 +357,9 @@ public class myJobsGUI implements ActionListener, ComponentListener {
 
         //Display the window.
         frame.pack();
-        showOnScreen(1,frame);
+        showOnScreen(monitor,frame);
         frame.setVisible(true);
     }
-
-//    /**
-//     * method updates the JTable with list of current user's active jobs. Omits QPVA jobs.
-//     * @param as400 the AS400 object to get the spool data from
-//     * @throws PropertyVetoException
-//     * @throws AS400SecurityException
-//     * @throws ObjectDoesNotExistException
-//     * @throws IOException
-//     * @throws InterruptedException
-//     * @throws ErrorCompletingRequestException
-//     */
-//    private void updateSpoolTable(AS400 as400) throws PropertyVetoException, AS400SecurityException, ObjectDoesNotExistException, IOException, InterruptedException, ErrorCompletingRequestException {
-//        // Create list of all jobs on server
-//        JobList jList = new JobList(as400);
-////        System.out.println("Created list of all jobs on system");
-//
-//        // Filter job list to current user only
-//        jList.addJobSelectionCriteria(JobList.SELECTION_USER_NAME, JobList.SELECTION_USER_NAME_CURRENT); // Filter job list to active user
-//        jList.addJobSelectionCriteria(JobList.SELECTION_PRIMARY_JOB_STATUS_OUTQ, false); // Filter job list to active only
-////        System.out.println("Job list filtered to current user");
-//
-//        // Create enumeration of job list
-//        Enumeration jobs = jList.getJobs();
-//
-//        // Iterate through job list enumeration to print the status of each job
-////        System.out.println("Beginning iteration through user jobs");
-//
-//        // Create array of values (will be used to populate the dialogue window)
-//        java.util.List<String> columns = new ArrayList<>();
-//        List<String[]> values = new ArrayList<>();
-//
-//        // create column name list
-//        columns.add("Job Name"); columns.add("Job Number"); columns.add("Start Date");
-//
-//        // add job data rows to array
-//        if (jobs.hasMoreElements()) {
-//            while (jobs.hasMoreElements()) {
-//                Job job = (Job) jobs.nextElement(); // Advance the enumeration forward
-//                String jName = job.getName(); // Get job name
-//                String jNum = job.getNumber(); // Get job number
-//                Date jDate = job.getDate(); // Get date
-//                values.add(new String[]{jName, jNum, jDate.toString()});
-//            }
-//        }
-//
-////        //print contents of horizon job array list to console
-////        for (String[] arr : values) {System.out.println(Arrays.toString(arr));}
-////
-////        System.out.println("Iteration complete");
-//
-//        // Create a dataset. Will be added to table in next step
-//        TableModel tableModel = new DefaultTableModel(values.toArray(new Object[][]{}), columns.toArray());
-//
-//        // Populate swing table with dataset
-//        tblSpool.setModel(tableModel);
-//
-//        print("spool file table updated");
-//    }
 
     /** method centers the Jframe on specified monitor in a multi-mointor setup
      * @param screen the screen number that you wish to display the Jframe on
@@ -385,11 +386,17 @@ public class myJobsGUI implements ActionListener, ComponentListener {
         print("app started");
 
         String laf = null;
+
         for (int i = 0; i < args.length; i++) {
             if (args[i].equals("-laf")) {
                 laf = args[i + 1];
             }
+            if (args[i].equals("-m")) {
+                monitor = Integer.parseInt(args[i + 1]);
+            }
         }
+
+        // set up look and feel
         try {
             if (Objects.equals(laf, "") || Objects.equals(laf, "windows")) {
                 UIManager.setLookAndFeel("com.sun.java.swing.plaf.windows.WindowsLookAndFeel");
@@ -403,10 +410,9 @@ public class myJobsGUI implements ActionListener, ComponentListener {
         }
         print("look and feel: "+UIManager.getLookAndFeel().getName());
 
+
         javax.swing.SwingUtilities.invokeLater(new Runnable() {
-            public void run() {
-                createAndShowGUI();
-            }
+            public void run() {createAndShowGUI();}
         });
     }
 }

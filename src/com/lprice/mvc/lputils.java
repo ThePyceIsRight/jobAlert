@@ -15,4 +15,9 @@ public class lputils {
     public static void print(String msg){System.out.println(now()+" "+msg);}
     public static void print(String[] msg){for (String s : msg) {System.out.println(now()+" "+s);}}
     public static void print(int[] msg){for (int i : msg) {System.out.println(now()+" "+i);}}
+
+    public static void printList(int[] msg){
+        for (int i : msg) {System.out.println(now()+" "+i);}
+    }
+
 }
